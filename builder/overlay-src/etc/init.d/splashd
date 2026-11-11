@@ -1,0 +1,125 @@
+#!/sbin/openrc-run
+# Keeps the boot splash on screen through the rest of boot - the same
+# background image splash.png rendered into (see builder/scripts/03-splash.sh,
+# which is what puts a copy of it at /etc/splash/ in the real root).
+#
+# It isn't the first splash: Alpine's initramfs-init shows the same image
+# from much earlier (it finds it in splash.cpio.gz, the second initrd
+# autoexec.ipxe loads), with its own fbsplash on VT 16, drawing through
+# simpledrm - the generic framebuffer the firmware set up. Early in the
+# real root, udev loads the real GPU driver (vmwgfx, i915, amdgpu, ...),
+# which replaces simpledrm, resets the display mode and blanks the screen;
+# the initramfs splash is left drawing into a framebuffer that no longer
+# exists. That blank can't be avoided (short of putting every GPU driver
+# in the initramfs), but it can be kept short: this runs in the sysinit
+# runlevel straight after udev, waits for udev to finish loading drivers
+# (so /dev/fb0 is the final one), and redraws immediately.
+#
+# It then takes over from the initramfs splash, which keeps running after
+# switch_root and would otherwise fight this one for the screen:
+#
+#   1. Start our fbsplash on VT 15 (-T 15). Switching VTs tells the
+#      initramfs one to let go of the screen, and it stops drawing.
+#   2. Tell the initramfs one to exit (its control FIFO is /.splash.ctrl).
+#      Since VT 16 is no longer on screen, it doesn't switch back to tty1
+#      on the way out - so the boot messages there never show.
+#
+# -T also keeps text off the splash: VT 15 is put into graphics mode,
+# and kernel messages are redirected to tty1.
+#
+# fbsplash stays up until it reads "exit" from its control FIFO
+# (/run/splash.ctrl), which etc/init.d/kiosk sends just before Sway
+# starts.
+#
+# fbsplash is started once with start-stop-daemon, deliberately not
+# supervise-daemon: a supervisor would restart it after the kiosk's
+# "exit", and a restarted fbsplash -T would grab the screen away from Sway.
+#
+# Only runs if "splash" is on the kernel command line, matching the
+# vga=791/splash toggle in autoexec.ipxe; splash=no turns off both this
+# and the initramfs splash (that's the rule initramfs-init uses - it
+# shows its splash unless splash=no, whether or not "splash" is there,
+# whenever splash.cpio.gz has an image in it). If splash.png was never
+# provided at build time (see 03-splash.sh), /etc/splash/splash.ppm won't
+# exist and this quietly does nothing either way - neither case is
+# treated as a failure, so nothing that orders itself "after splashd"
+# gets blocked by it.
+
+description="Persistent boot splash"
+pidfile="/run/splashd.pid"
+
+INITRAMFS_CTRL="/.splash.ctrl"
+
+depend() {
+    after modloop udev-trigger
+    before local
+}
+
+start() {
+    # Same rule as Alpine's initramfs-init for its splash: splash=no turns
+    # it off. Also off if "splash" isn't there at all.
+    case " $(cat /proc/cmdline) " in
+        *" splash=no "*|*" splash=no")
+            einfo "splashd: splash=no on the kernel command line, nothing to do"
+            return 0
+            ;;
+        *" splash "*|*" splash="*) ;;
+        *)
+            einfo "splashd: no splash on the kernel command line, nothing to do"
+            return 0
+            ;;
+    esac
+    if [ ! -f /etc/splash/splash.ppm ]; then
+        einfo "splashd: no /etc/splash/splash.ppm (no splash.png at build time?), nothing to do"
+        return 0
+    fi
+
+    # Wait for udev to finish handling the coldplug events udev-trigger
+    # just fired - in particular loading the GPU driver, which replaces
+    # /dev/fb0. Drawing before that would draw onto the framebuffer that's
+    # about to go away. Bounded so odd hardware can't stall boot for long.
+    udevadm settle --timeout=10 2>/dev/null
+
+    # Root-only: everything that writes to it (this service and
+    # etc/init.d/kiosk) runs as root, so there's no reason to let the
+    # unprivileged kiosk/appbackend users at it.
+    rm -f /run/splash.ctrl
+    mkfifo -m 600 /run/splash.ctrl
+
+    ebegin "Starting splashd"
+    start-stop-daemon --start --background --make-pidfile --pidfile "${pidfile}" \
+        --exec /sbin/fbsplash -- \
+        -T 15 -s /etc/splash/splash.ppm -i /etc/splash/fbsplash.cfg -f /run/splash.ctrl
+    result=$?
+    eend "${result}"
+
+    # Wait for fbsplash to actually open the fifo for reading before
+    # returning: start-stop-daemon returning only means the fork
+    # succeeded, not that fbsplash has switched VT and drawn the image -
+    # and the initramfs splash mustn't be retired (below) until it has.
+    # Writing to a FIFO blocks until someone's reading it, so an empty
+    # line (which fbsplash ignores) makes a readiness check. Bounded
+    # generously (10s) so a genuinely broken/slow fbsplash still can't
+    # stall boot indefinitely.
+    if [ "${result}" = 0 ]; then
+        if ! timeout 10 sh -c "echo > /run/splash.ctrl" 2>/dev/null; then
+            ewarn "splashd: fbsplash didn't start reading the fifo in time"
+        fi
+    fi
+
+    # Only now - with ours on screen - retire the initramfs splash, if
+    # there is one (see the top of this file for why the order matters).
+    # timeout because a FIFO with nobody reading it blocks the writer.
+    if [ -p "${INITRAMFS_CTRL}" ]; then
+        timeout 2 sh -c "echo exit > ${INITRAMFS_CTRL}" 2>/dev/null
+    fi
+
+    return "${result}"
+}
+
+stop() {
+    [ -p /run/splash.ctrl ] && timeout 1 sh -c "echo exit > /run/splash.ctrl" 2>/dev/null
+    ebegin "Stopping splashd"
+    start-stop-daemon --stop --pidfile "${pidfile}" --exec /sbin/fbsplash
+    eend $?
+}

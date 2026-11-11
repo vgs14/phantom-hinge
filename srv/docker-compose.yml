@@ -1,0 +1,84 @@
+
+# Both containers log to stdout/stderr (see dnsmasq.conf and nginx.conf).
+# Docker's default json-file driver keeps that forever, so cap it: at most
+# 3 x 10MB per container, oldest dropped first.
+x-logging: &logging
+    driver: json-file
+    options:
+        max-size: '10m'
+        max-file: '3'
+
+services:
+
+    ph_dnsmasq:
+        container_name: ph_dnsmasq
+        build:
+            context: ./dnsmasq
+            args:
+                ALPINE_RELEASE: ${SERVER_ALPINE_RELEASE}
+        # Network-dependent dnsmasq options, from .env. These are appended to
+        # the Dockerfile's ENTRYPOINT; everything static is in dnsmasq.conf.
+        command:
+            - --dhcp-range=${DHCP_RANGE_START},${DHCP_RANGE_END},${DHCP_NETMASK},24h
+            # Tell the DHCP clients to use us as their DNS server
+            - --dhcp-option=option:dns-server,${DNSMASQ_IP}
+            # boot.lan is how iPXE and the kiosk find nginx (see autoexec.ipxe).
+            # host-record + local=/lan/ (rather than address=) matters: with
+            # no upstream DNS (no-resolv), anything dnsmasq isn't
+            # authoritative for gets REFUSED - including the AAAA lookup
+            # musl's resolver sends alongside the A lookup. musl then fails
+            # the whole lookup ("wget: bad address 'boot.lan'" in the
+            # initramfs), even though iPXE, which only asks for A, is fine.
+            # This way the AAAA gets an empty NOERROR answer instead.
+            - --host-record=boot.lan,${HTTP_IP}
+            - --local=/lan/
+        restart: always
+        logging: *logging
+        # DHCP and TFTP are UDP protocols - without the /udp suffix, Docker
+        # publishes these as TCP-only and neither will actually work. DNS
+        # (53) is published as both, since dnsmasq will answer over either.
+        # Note: with the ipvlan driver below, the container has its own
+        # routable IP on the physical network, so these published ports are
+        # mostly documentation - Docker's NAT-based port publishing doesn't
+        # really apply to ipvlan/macvlan networks. Kept correct anyway so
+        # nothing here is misleading if the network mode ever changes.
+        ports:
+            - '53:53'
+            - '53:53/udp'
+            - '67:67/udp'
+            - '69:69/udp'
+        cap_add:
+          - 'NET_ADMIN'
+          - 'NET_RAW'
+        networks:
+            phantom-hinge:
+                ipv4_address: ${DNSMASQ_IP}
+        volumes:
+            - ./dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf
+            - ./dnsmasq/tftp:/tftp
+
+    ph_nginx:
+        container_name: ph_nginx
+        build:
+            context: ./nginx
+            args:
+                ALPINE_RELEASE: ${SERVER_ALPINE_RELEASE}
+        restart: always
+        logging: *logging
+        ports:
+            - '80:80'
+        networks:
+            phantom-hinge:
+                ipv4_address: ${HTTP_IP}
+        volumes:
+            - ./nginx/nginx.conf:/etc/nginx.conf
+            - ./nginx/wwwroot:/wwwroot
+
+networks:
+    phantom-hinge:
+        driver: ipvlan
+        ipam:
+            config:
+                - subnet: ${SUBNET}
+        driver_opts:
+            parent: ${PARENT_IF}

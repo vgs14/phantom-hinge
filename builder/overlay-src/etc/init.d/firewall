@@ -1,0 +1,34 @@
+#!/sbin/openrc-run
+# Inbound firewall - drops every connection the kiosk didn't start itself.
+# The rules are in /etc/firewall.nft.
+#
+# Runs in the "boot" runlevel so the rules are in place before anything in
+# "default" (app-backend, devmode's sshd, the kiosk) starts listening. The
+# network is already up by then on a netboot (the initramfs brought it up
+# to fetch the apkovl), so there's no earlier point to do this from the
+# real root.
+#
+# If loading the rules fails, this logs an error but doesn't stop the
+# kiosk from booting - check `rc-service firewall status` / the boot log
+# in devmode if you suspect it.
+
+description="Inbound firewall (nftables)"
+
+RULES="/etc/firewall.nft"
+
+depend() {
+    after modloop
+    before net
+}
+
+start() {
+    ebegin "Loading firewall rules from ${RULES}"
+    nft -f "${RULES}"
+    eend $?
+}
+
+stop() {
+    ebegin "Flushing firewall rules"
+    nft flush ruleset
+    eend $?
+}

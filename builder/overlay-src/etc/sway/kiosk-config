@@ -1,0 +1,76 @@
+# Minimal kiosk-only Sway config.
+
+seat seat0 hide_cursor 3000
+
+# srvrkeys:none stops Ctrl+Alt+F1-F12 producing the XF86Switch_VT_* keysyms
+# that Sway acts on to switch virtual terminals - they become plain F-keys
+# instead, so there's no way off the kiosk's VT from the keyboard.
+input type:keyboard xkb_options srvrkeys:none
+
+default_border none
+default_floating_border none
+
+# Desktop background: the splash image if there is one (generated at build
+# time by builder/scripts/04-build-apkovl.sh). Shows until Chromium covers
+# it, so there's no black screen between the boot splash and the app.
+include /etc/sway/background.conf
+
+for_window [app_id="chromium"] fullscreen enable
+
+# Swallow shortcuts at the compositor level, before Chromium ever sees them.
+# Note this means the web app can't use them either - remove a line here if
+# your app genuinely needs that key combination.
+
+# Windows/tabs
+bindsym Mod1+F4 nop
+bindsym Control+w nop
+bindsym Control+F4 nop
+bindsym Control+t nop
+bindsym Control+n nop
+bindsym Control+Shift+n nop
+bindsym Control+Shift+w nop
+bindsym Control+Shift+t nop
+
+# Navigation (address bar, open file, back/forward/home)
+bindsym Control+l nop
+bindsym Control+o nop
+bindsym Mod1+Left nop
+bindsym Mod1+Right nop
+bindsym Mod1+Home nop
+
+# Browser pages (history, downloads, view source, bookmarks, clear data)
+bindsym Control+h nop
+bindsym Control+j nop
+bindsym Control+u nop
+bindsym Control+d nop
+bindsym Control+Shift+o nop
+bindsym Control+Shift+b nop
+bindsym Control+Shift+Delete nop
+
+# Save/print
+bindsym Control+s nop
+bindsym Control+p nop
+bindsym Control+Shift+p nop
+
+# Menus, devtools, task manager
+bindsym Mod1+f nop
+bindsym Mod1+e nop
+bindsym Control+Shift+i nop
+bindsym Control+Shift+j nop
+bindsym Control+Shift+c nop
+bindsym Shift+Escape nop
+
+# Function keys
+bindsym F1 nop
+bindsym F3 nop
+bindsym F6 nop
+bindsym F7 nop
+bindsym F10 nop
+bindsym F11 nop
+bindsym F12 nop
+bindsym Print nop
+
+# This runs as kiosk so *needs* to be chmod 755. It keeps Chromium running
+# (relaunching it if it exits), so it's started once with exec, not
+# exec_always.
+exec /etc/sway/start-chromium.sh

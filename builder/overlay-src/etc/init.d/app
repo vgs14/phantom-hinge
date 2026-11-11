@@ -1,0 +1,117 @@
+#!/sbin/openrc-run
+# Optional "app" overlay.
+#
+# If appurl= is present on the kernel command line, downloads a SquashFS
+# image from that URL, mounts it read-only at /opt/app, and (if present)
+# runs /opt/app/init.sh to completion before the kiosk starts.
+#
+# If appurl is not set (or empty), this service does nothing.
+#
+# Fetch/checksum/mount failures are retried a few times and then just
+# logged - they never stop the kiosk from starting (see etc/init.d/kiosk,
+# which depends on this service completing, not succeeding).
+#
+# EDIT: appurl= (and optionally appsha256=) are set in
+# srv/dnsmasq/tftp/autoexec.ipxe.
+
+description="Optional app overlay (fetches + mounts a SquashFS at /opt/app)"
+
+depend() {
+    need networking
+    after udev
+    before kiosk
+}
+
+APP_DIR="/opt/app"
+APP_IMG="/tmp/app.squashfs"
+MAX_ATTEMPTS=3
+RETRY_DELAY=5
+INIT_TIMEOUT=120
+
+# Print the value of a kernel command line parameter (e.g. "appurl"), if
+# present. Prints nothing (and returns 1) if it isn't on the command line
+# at all - callers should still treat an empty value the same as "unset".
+cmdline_param() {
+    name="$1"
+    for param in $(cat /proc/cmdline); do
+        case "$param" in
+            "${name}="*)
+                echo "${param#*=}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+start() {
+    appurl="$(cmdline_param appurl)"
+
+    if [ -z "${appurl}" ]; then
+        einfo "app: no appurl= on the kernel command line, nothing to do"
+        return 0
+    fi
+
+    appsha256="$(cmdline_param appsha256)"
+
+    ebegin "app: fetching ${appurl}"
+
+    fetched=false
+    attempt=1
+    while [ "${attempt}" -le "${MAX_ATTEMPTS}" ]; do
+        rm -f "${APP_IMG}"
+
+        if ! wget -q -O "${APP_IMG}" "${appurl}"; then
+            ewarn "app: download failed (attempt ${attempt}/${MAX_ATTEMPTS})"
+        elif [ -n "${appsha256}" ] && \
+             [ "$(sha256sum "${APP_IMG}" | awk '{print $1}')" != "${appsha256}" ]; then
+            ewarn "app: appsha256 mismatch (attempt ${attempt}/${MAX_ATTEMPTS})"
+        else
+            fetched=true
+            break
+        fi
+
+        rm -f "${APP_IMG}"
+        attempt=$((attempt + 1))
+        [ "${attempt}" -le "${MAX_ATTEMPTS}" ] && sleep "${RETRY_DELAY}"
+    done
+
+    if [ "${fetched}" != true ]; then
+        ewarn "app: giving up after ${MAX_ATTEMPTS} attempts, continuing without /opt/app"
+        eend 1
+        return 0
+    fi
+
+    # squashfs support comes from the same kernel module used to mount
+    # modloop, so it's already available - modprobe is just belt-and-braces
+    # in case it isn't built in on a given kernel.
+    modprobe squashfs 2>/dev/null
+
+    mkdir -p "${APP_DIR}"
+
+    if ! mount -t squashfs -o loop,ro "${APP_IMG}" "${APP_DIR}"; then
+        ewarn "app: mount failed, continuing without /opt/app"
+        eend 1
+        return 0
+    fi
+
+    eend 0
+
+    if [ -f "${APP_DIR}/init.sh" ]; then
+        # The SquashFS is read-only, so an init.sh that was packed without
+        # its exec bit can't be fixed here - run it via sh in that case
+        # rather than failing with "permission denied". Bounded by
+        # INIT_TIMEOUT so a hung init.sh can't stall boot forever.
+        ebegin "app: running ${APP_DIR}/init.sh"
+        if [ -x "${APP_DIR}/init.sh" ]; then
+            timeout "${INIT_TIMEOUT}" "${APP_DIR}/init.sh"
+        else
+            timeout "${INIT_TIMEOUT}" sh "${APP_DIR}/init.sh"
+        fi
+        init_rc=$?
+        [ "${init_rc}" -ne 0 ] && ewarn "app: init.sh exited ${init_rc} (or timed out after ${INIT_TIMEOUT}s), continuing anyway"
+        eend 0
+    fi
+
+    return 0
+}

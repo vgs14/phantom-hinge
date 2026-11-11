@@ -1,0 +1,26 @@
+[
+  {
+    "id": "fire-drill",
+    "level": "warning",
+    "title": "Fire alarm test - Thursday 10:00",
+    "body": "The weekly alarm test lasts about a minute. No need to leave the building."
+  },
+  {
+    "id": "wifi",
+    "level": "info",
+    "title": "Guest Wi-Fi",
+    "body": "Ask at reception for a guest Wi-Fi voucher. Vouchers last for one day."
+  },
+  {
+    "id": "lunch",
+    "level": "info",
+    "title": "Lunch and learn, Friday 12:30",
+    "body": "\"Getting more out of the new booking system\" in the Boardroom. Sandwiches provided."
+  },
+  {
+    "id": "parking",
+    "level": "notice",
+    "title": "Visitor parking",
+    "body": "Bays 1-6 at the front are reserved for visitors. Please leave your registration at reception."
+  }
+]

@@ -1,0 +1,87 @@
+#!/sbin/openrc-run
+# Runs the app's Node.js backend, if it has one, as the unprivileged
+# "appbackend" user (see etc/local.d/01-app-user.start).
+#
+# Part of the base image - unlike the app content itself, which is
+# arbitrary and supplied via appurl= at boot (see etc/init.d/app). This
+# service is what turns /opt/app/backend/server.js, once mounted, into a
+# supervised, auto-restarting daemon. It's always enabled (see
+# runlevels/default/app-backend), same as "app" itself - self-gating
+# means it's a quiet no-op on the (common) boots where there's no app.
+#
+# Convention: your app's SquashFS needs its Node entrypoint at
+# backend/server.js at its top level (see
+# builder/scripts/make-app-squashfs.sh). Adjust ENTRYPOINT/WORKDIR below
+# if your app uses a different layout. No changes needed to
+# /opt/app/init.sh for this - it starts automatically, ordered after
+# "app" mounts the SquashFS.
+#
+# Your server.js needs to listen on 127.0.0.1:${PORT} (default 3000,
+# override below). This service blocks until something's actually
+# accepting connections on that port before returning - "need
+# app-backend" elsewhere (see kiosk) only waits for THIS to return, so
+# without an actual readiness check, kiosk/Chromium would just be
+# ordered after the fork, not after the backend is ready to serve
+# anything, and could load a blank page before Node's finished starting.
+#
+# Node's stdout/stderr go to syslog (/var/log/messages, tagged
+# app-backend), which etc/conf.d/syslog caps in size.
+
+description="App backend (Node.js), if the mounted app has one"
+pidfile="/run/app-backend.pid"
+
+ENTRYPOINT="/opt/app/backend/server.js"
+WORKDIR="/opt/app/backend"
+PORT="${PORT:-3000}"
+
+depend() {
+    need local
+    use logger
+    after app
+    after cacert
+}
+
+start() {
+    if [ ! -f "${ENTRYPOINT}" ]; then
+        einfo "app-backend: no ${ENTRYPOINT}, nothing to do"
+        return 0
+    fi
+
+    ebegin "Starting app-backend"
+    PORT="${PORT}" supervise-daemon app-backend --start --pidfile "${pidfile}" \
+        --user appbackend:appbackend \
+        --chdir "${WORKDIR}" \
+        --stdout-logger "logger -t app-backend -p daemon.info" \
+        --stderr-logger "logger -t app-backend -p daemon.err" \
+        --respawn-max 0 \
+        --respawn-delay 3 \
+        -- /usr/bin/node "${ENTRYPOINT}"
+    result=$?
+    eend "${result}"
+
+    # Wait for the backend to actually be accepting connections, not
+    # just forked. Bounded (10s) so a genuinely broken backend can't
+    # stall boot - kiosk starts either way, just possibly against a
+    # backend that isn't up yet in that case.
+    if [ "${result}" = 0 ]; then
+        ebegin "app-backend: waiting for 127.0.0.1:${PORT}"
+        tries=0
+        until nc -z 127.0.0.1 "${PORT}" 2>/dev/null; do
+            tries=$((tries + 1))
+            if [ "${tries}" -ge 50 ]; then
+                ewarn "app-backend: not answering on :${PORT} after 10s, continuing anyway"
+                break
+            fi
+            sleep 0.2
+        done
+        eend 0
+    fi
+
+    return "${result}"
+}
+
+stop() {
+    ebegin "Stopping app-backend"
+    supervise-daemon app-backend --stop --pidfile "${pidfile}"
+    eend $?
+}

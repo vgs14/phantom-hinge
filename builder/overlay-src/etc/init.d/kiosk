@@ -1,0 +1,74 @@
+#!/sbin/openrc-run
+# Sway (Wayland kiosk compositor) + Chromium in kiosk mode.
+# EDIT: the URL in /etc/sway/start-chromium.sh to point at your app.
+
+description="Sway + Chromium kiosk"
+command="/usr/bin/sway"
+command_args="-c /etc/sway/kiosk-config"
+command_user="kiosk:kiosk"
+pidfile="/run/kiosk.pid"
+supervisor="supervise-daemon"
+
+# Sway's output - and Chromium's, which inherits it - goes to syslog
+# (/var/log/messages, size-capped by etc/conf.d/syslog) rather than a file
+# that would grow in RAM for as long as the kiosk runs.
+output_logger="logger -t kiosk -p daemon.info"
+error_logger="logger -t kiosk -p daemon.err"
+
+# Unlimited automatic restarts if sway/chromium crashes.
+respawn_max=0
+respawn_delay=3
+
+depend() {
+    need seatd dbus local
+    need networking
+    use logger
+    after udev
+    after app
+    after splashd
+    after app-backend
+    after cacert
+}
+
+start_pre() {
+    KIOSK_UID=$(id -u kiosk)
+    checkpath --directory --owner kiosk:kiosk --mode 0700 "/run/user/${KIOSK_UID}"
+    export XDG_RUNTIME_DIR="/run/user/${KIOSK_UID}"
+
+    # Tell splashd to exit, releasing the framebuffer before sway tries to
+    # take it over. Best-effort: no-op if splashd isn't running (splash
+    # wasn't requested, or has no image). Bounded with timeout so a
+    # stuck/absent reader can't stall boot.
+    if [ -p /run/splash.ctrl ]; then
+        timeout 1 sh -c "echo exit > /run/splash.ctrl" 2>/dev/null
+    fi
+    # Fallback: if splashd never took over from the initramfs splash (e.g.
+    # it failed to start), retire that one too.
+    if [ -p /.splash.ctrl ]; then
+        timeout 1 sh -c "echo exit > /.splash.ctrl" 2>/dev/null
+    fi
+    # fbsplash switches back to the original VT on its way out, and Sway
+    # takes whichever VT is active when it starts - so wait for it to be
+    # gone (bounded, 2s) rather than racing it.
+    tries=0
+    while pidof fbsplash >/dev/null 2>&1 && [ "${tries}" -lt 20 ]; do
+        sleep 0.1
+        tries=$((tries + 1))
+    done
+
+    # --- Software rendering (swrender= on the kernel command line) ---
+    # For VMs and other machines without a working GPU driver - e.g.
+    # VMware's vmwgfx fails DRI2/EGL init ("failed to create screen").
+    # Forces slower CPU-only rendering in Sway; etc/sway/start-chromium.sh
+    # checks the same flag and adds --disable-gpu/--disable-gpu-compositing
+    # to match. The two have to agree: Sway on software rendering with
+    # Chromium still trying the (nonexistent) GPU gives a white screen that
+    # survives even a reload. Toggle it in autoexec.ipxe, no rebuild needed.
+    case " $(cat /proc/cmdline) " in
+        *" swrender="[!\ ]*)
+            einfo "kiosk: swrender set - using software rendering"
+            export WLR_RENDERER=pixman
+            export WLR_NO_HARDWARE_CURSORS=1
+            ;;
+    esac
+}

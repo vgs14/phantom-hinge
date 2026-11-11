@@ -1,0 +1,87 @@
+#!/sbin/openrc-run
+# Optional private CA cert, fetched at boot rather than baked into the
+# apkovl - avoids a rebuild every time the cert rotates.
+#
+# If cacerturl is set on the kernel command line (see autoexec.ipxe),
+# downloads it, verifies it against cacertsha256 if given, installs it
+# into the system trust store, and runs update-ca-certificates - all
+# before kiosk/app-backend start, so Chromium and the Node backend both
+# pick it up.
+#
+# The checksum here is integrity, not confidentiality: it protects
+# against corruption or a stale URL, not an attacker who can already
+# tamper with this boot server's plain-HTTP traffic - same honest caveat
+# as appsha256= for the app overlay (see etc/init.d/app).
+#
+# If cacerturl isn't set, this quietly does nothing.
+
+description="Optional private CA cert"
+
+CACERT_FILE="/usr/local/share/ca-certificates/ph-ca.crt"
+MAX_ATTEMPTS=3
+RETRY_DELAY=5
+
+depend() {
+    need networking
+    before kiosk
+    before app-backend
+}
+
+# Same helper as etc/init.d/app.
+cmdline_param() {
+    name="$1"
+    for param in $(cat /proc/cmdline); do
+        case "${param}" in
+            "${name}="*)
+                echo "${param#*=}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+start() {
+    cacerturl="$(cmdline_param cacerturl)"
+
+    if [ -z "${cacerturl}" ]; then
+        einfo "cacert: no cacerturl= on the kernel command line, nothing to do"
+        return 0
+    fi
+
+    cacertsha256="$(cmdline_param cacertsha256)"
+
+    ebegin "cacert: fetching ${cacerturl}"
+
+    fetched=false
+    attempt=1
+    while [ "${attempt}" -le "${MAX_ATTEMPTS}" ]; do
+        rm -f "${CACERT_FILE}"
+
+        if ! wget -q -O "${CACERT_FILE}" "${cacerturl}"; then
+            ewarn "cacert: download failed (attempt ${attempt}/${MAX_ATTEMPTS})"
+        elif [ -n "${cacertsha256}" ] && \
+             [ "$(sha256sum "${CACERT_FILE}" | awk '{print $1}')" != "${cacertsha256}" ]; then
+            ewarn "cacert: cacertsha256 mismatch (attempt ${attempt}/${MAX_ATTEMPTS})"
+        else
+            fetched=true
+            break
+        fi
+
+        rm -f "${CACERT_FILE}"
+        attempt=$((attempt + 1))
+        [ "${attempt}" -le "${MAX_ATTEMPTS}" ] && sleep "${RETRY_DELAY}"
+    done
+
+    if [ "${fetched}" != true ]; then
+        ewarn "cacert: giving up after ${MAX_ATTEMPTS} attempts - HTTPS to a private-CA backend will fail"
+        eend 1
+        return 0
+    fi
+
+    eend 0
+
+    ebegin "cacert: updating trust store"
+    update-ca-certificates >/dev/null 2>&1
+    eend $?
+}

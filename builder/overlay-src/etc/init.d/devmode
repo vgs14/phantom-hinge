@@ -1,0 +1,79 @@
+#!/sbin/openrc-run
+# Dev/debug-only root SSH access, entirely opt-in via devmode= on the
+# kernel command line (see autoexec.ipxe). Without it, this does nothing:
+# sshd never starts, root is never SSH-reachable, and root has no
+# password either way (see etc/local.d/02-lock-root.start) - the
+# production default is "no way in at all", not "locked unless someone
+# remembers to lock it".
+#
+# Host keys are generated fresh every boot (ssh-keygen -A) rather than
+# baked in - nothing persists in this diskless setup anyway, and it means
+# there's no private host key sitting in this repo. Expect a "remote host
+# identification has changed" warning each time you reboot a dev box -
+# that's expected, not a bug.
+#
+# openssh is always installed (see etc/apk/world), so it's available
+# offline in both modes - what's gated here is only whether it runs.
+# There's deliberately no runlevels/default/sshd symlink; sshd is started
+# imperatively from here, only when devmode is actually set.
+
+description="Dev-only: SSH host keys + root authorized_keys + sshd, gated by devmode="
+
+depend() {
+    need networking
+    after firewall
+    # local runs etc/local.d/02-lock-root.start - lock root before sshd
+    # ever listens, rather than relying on sshd's key-only default alone.
+    after local
+}
+
+# Read a kernel command line parameter by name (same helper as etc/init.d/app).
+cmdline_param() {
+    name="$1"
+    for param in $(cat /proc/cmdline); do
+        case "${param}" in
+            "${name}="*)
+                echo "${param#*=}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+start() {
+    devmode="$(cmdline_param devmode)"
+
+    if [ -z "${devmode}" ]; then
+        einfo "devmode: not set, nothing to do"
+        return 0
+    fi
+
+    ewarn "devmode: kernel command line has devmode= - enabling root SSH access for debugging"
+
+    ebegin "devmode: generating SSH host keys"
+    ssh-keygen -A >/dev/null 2>&1
+    eend $?
+
+    if [ -f /etc/ssh-dev/authorized_keys ]; then
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+        cp /etc/ssh-dev/authorized_keys /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+    else
+        ewarn "devmode: no dev authorized_keys baked in - root SSH login won't work"
+        ewarn "devmode: put a public key in builder/ssh-dev/authorized_keys and rebuild"
+    fi
+
+    ebegin "devmode: starting sshd"
+    rc-service sshd start
+    eend $?
+
+    # The firewall (etc/firewall.nft) drops all inbound connections, so
+    # open SSH - only on devmode boots, and only until the next reboot.
+    ebegin "devmode: allowing inbound SSH through the firewall"
+    nft add rule inet filter input tcp dport 22 accept
+    eend $?
+
+    return 0
+}

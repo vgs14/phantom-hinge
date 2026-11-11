@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>USB Monitor</title>
+<style>
+  /* Everything is inline: the kiosk is offline, and Chromium's URL
+     allowlist only lets this page load from localhost:3000 anyway. */
+  :root {
+    --bg: #101418;
+    --panel: #181e24;
+    --border: #2a333c;
+    --text: #e6eaee;
+    --muted: #8b97a3;
+    --add: #3fb67b;
+    --remove: #e0645c;
+    --mono: "DejaVu Sans Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 16px/1.4 "DejaVu Sans", system-ui, sans-serif; padding: 24px 32px; }
+  header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 20px; }
+  h1 { margin: 0; font-size: 28px; font-weight: 600; }
+  #status { color: var(--muted); font-size: 14px; }
+  #status::before { content: "\25CF  "; color: var(--remove); }
+  #status.live::before { color: var(--add); }
+  #empty { color: var(--muted); font-size: 20px; margin-top: 15vh; text-align: center; }
+
+  .event { background: var(--panel); border: 1px solid var(--border); border-left: 6px solid var(--add);
+           border-radius: 6px; padding: 16px 20px; margin-bottom: 16px; }
+  .event.remove { border-left-color: var(--remove); opacity: 0.8; }
+  .event.fresh { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { background: #24313b; } }
+  .head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .badge { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+           padding: 2px 8px; border-radius: 4px; background: var(--add); color: #08130d; }
+  .remove .badge { background: var(--remove); color: #1a0806; }
+  .name { font-size: 20px; font-weight: 600; }
+  .ids { font-family: var(--mono); color: var(--muted); }
+  .time { margin-left: auto; color: var(--muted); font-size: 14px; }
+
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; margin: 12px 0 0;
+       font-family: var(--mono); font-size: 13px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  h3 { margin: 14px 0 0; font-size: 13px; font-weight: 600; color: var(--muted);
+       text-transform: uppercase; letter-spacing: .05em; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 0 32px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>USB devices</h1>
+  <span id="status">Connecting&hellip;</span>
+</header>
+<div id="empty">Plug in a USB device.</div>
+<main id="events"></main>
+
+<script>
+"use strict";
+
+const MAX_EVENTS = 50;
+
+const CLASSES = {
+  "00": "Defined per interface", "01": "Audio", "02": "Communications", "03": "HID",
+  "05": "Physical", "06": "Image", "07": "Printer", "08": "Mass storage", "09": "Hub",
+  "0a": "CDC data", "0b": "Smart card", "0d": "Content security", "0e": "Video",
+  "0f": "Personal healthcare", "10": "Audio/video", "11": "Billboard", "12": "USB-C bridge",
+  "dc": "Diagnostic", "e0": "Wireless controller", "ef": "Miscellaneous",
+  "fe": "Application specific", "ff": "Vendor specific",
+};
+
+const eventsEl = document.getElementById("events");
+const emptyEl = document.getElementById("empty");
+const statusEl = document.getElementById("status");
+
+// Device-supplied strings (manufacturer, product, serial, ...) come from
+// whatever was plugged in, so they only ever go in via textContent.
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function className(code) {
+  if (!code) return undefined;
+  const name = CLASSES[code.toLowerCase()];
+  return name ? `${code} (${name})` : code;
+}
+
+function speed(mbps) {
+  return mbps ? `${mbps} Mbit/s` : undefined;
+}
+
+function list(title, rows) {
+  const frag = document.createDocumentFragment();
+  const present = rows.filter(([, v]) => v !== undefined && v !== null && v !== "");
+  if (!present.length) return frag;
+  if (title) frag.append(el("h3", null, title));
+  const dl = el("dl");
+  for (const [k, v] of present) dl.append(el("dt", null, k), el("dd", null, String(v)));
+  frag.append(dl);
+  return frag;
+}
+
+function render(ev, fresh) {
+  const p = ev.properties;
+  const s = ev.sysfs || {};
+  const removed = ev.action === "remove";
+
+  const vid = s.idVendor || p.ID_VENDOR_ID;
+  const pid = s.idProduct || p.ID_MODEL_ID;
+  const vendor = s.manufacturer || p.ID_VENDOR_FROM_DATABASE || p.ID_VENDOR;
+  const model = s.product || p.ID_MODEL_FROM_DATABASE || p.ID_MODEL;
+  const name = [vendor, model].filter(Boolean).join(" ") || "Unknown device";
+
+  const card = el("section", `event ${removed ? "remove" : "add"}${fresh ? " fresh" : ""}`);
+  const head = el("div", "head");
+  head.append(
+    el("span", "badge", removed ? "Removed" : ev.action === "add" ? "Plugged in" : ev.action),
+    el("span", "name", name),
+    el("span", "ids", vid && pid ? `${vid}:${pid}` : ""),
+    el("span", "time", new Date(ev.time).toLocaleTimeString()),
+  );
+  card.append(head);
+
+  const cols = el("div", "cols");
+  const left = el("div");
+  left.append(list("Device", [
+    ["Manufacturer", vendor],
+    ["Product", model],
+    ["Serial", s.serial || p.ID_SERIAL_SHORT],
+    ["Vendor ID", vid],
+    ["Product ID", pid],
+    ["Revision", s.bcdDevice || p.ID_REVISION],
+    ["USB version", (s.version || "").trim() || undefined],
+    ["Speed", speed(s.speed)],
+    ["Class", className(s.bDeviceClass)],
+    ["Max power", s.bMaxPower],
+    ["Bus / device", s.busnum ? `${s.busnum} / ${s.devnum}` : p.BUSNUM && `${p.BUSNUM} / ${p.DEVNUM}`],
+    ["Driver", ev.driver || p.DRIVER],
+    ["Device node", p.DEVNAME],
+    ["Sysfs path", ev.devpath],
+  ]));
+  for (const i of ev.interfaces || []) {
+    left.append(list(`Interface ${i.name}`, [
+      ["Class", className(i.bInterfaceClass)],
+      ["Subclass / protocol", i.bInterfaceSubClass && `${i.bInterfaceSubClass} / ${i.bInterfaceProtocol}`],
+      ["Description", i.interface],
+      ["Driver", i.driver],
+    ]));
+  }
+
+  const right = el("div");
+  right.append(list("udev properties", Object.entries(p).sort(([a], [b]) => a.localeCompare(b))));
+
+  cols.append(left, right);
+  card.append(cols);
+
+  eventsEl.prepend(card);
+  while (eventsEl.children.length > MAX_EVENTS) eventsEl.lastElementChild.remove();
+  emptyEl.hidden = true;
+}
+
+// EventSource reconnects by itself if the backend restarts. The server
+// sends "reset" first on every connection, then replays its recent events.
+let replaying = false;
+const source = new EventSource("/events");
+source.onopen = () => {
+  statusEl.textContent = "Listening for udev events";
+  statusEl.classList.add("live");
+};
+source.onerror = () => {
+  statusEl.textContent = "Backend unreachable, reconnecting…";
+  statusEl.classList.remove("live");
+};
+source.addEventListener("reset", () => {
+  eventsEl.replaceChildren();
+  emptyEl.hidden = false;
+  replaying = true;
+  // Anything after the replay burst is a new event and gets highlighted.
+  setTimeout(() => { replaying = false; }, 500);
+});
+source.onmessage = (msg) => render(JSON.parse(msg.data), !replaying);
+</script>
+</body>
+</html>

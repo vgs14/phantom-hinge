@@ -1,0 +1,10 @@
+#!/bin/sh
+# Explicitly locks root's password every boot. This is deliberate, not
+# just relying on Alpine's default (no password set): a locked account
+# can't authenticate via a password no matter what asks for one - the
+# console getty prompts included - regardless of whether devmode's
+# key-only root SSH access (etc/init.d/devmode) is in use this boot.
+# Key-based SSH login is unaffected by this either way.
+
+passwd -l root >/dev/null 2>&1
+true

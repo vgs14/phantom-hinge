@@ -1,0 +1,23 @@
+# /etc/network/interfaces (in this overlay) hardcodes "eth0" as the name of
+# the kiosk's network interface. On real hardware, udev's predictable
+# naming (or a different NIC driver) can hand out something else entirely
+# (enp0s3, enp2s0, ...), which would leave eth0 undefined and the
+# "networking" OpenRC service - and therefore the kiosk service, which
+# depends on it - failing to start.
+#
+# This rule renames the first wired ethernet interface (ATTR{type}=="1" is
+# ARPHRD_ETHER) to eth0 regardless of what name udev would otherwise give
+# it, so the static config in /etc/network/interfaces keeps working across
+# different hardware without per-machine edits.
+#
+# Wi-Fi interfaces are ARPHRD_ETHER too, so they're excluded explicitly
+# (DEVTYPE=wlan) - otherwise on hardware with Wi-Fi (NUCs, laptops) the
+# wireless card can win the race for eth0 and the kiosk boots with no
+# network.
+#
+# This assumes single-NIC kiosk hardware, which matches the rest of this
+# project. If your target has more than one wired NIC, this rule as written
+# will try to rename all of them to eth0 and only one will win - pin to a
+# specific device (e.g. by KERNELS==, DRIVERS==, or MAC via ATTR{address})
+# instead.
+SUBSYSTEM=="net", ACTION=="add", ATTR{type}=="1", ENV{DEVTYPE}!="wlan", KERNEL!="eth0", NAME="eth0"

@@ -1,0 +1,157 @@
+#!ipxe
+
+# Don't show the iPXE menu
+set menu-timeout 0
+
+# Allow the link to settle. This fixes 'network unreachable' errors
+sleep 2
+
+# --- Configuration ---
+# boot.lan is the nginx container - dnsmasq answers it with HTTP_IP from
+# srv/.env, so this file never needs to know the boot server's IP.
+set boot-server http://boot.lan
+set base-url ${boot-server}/alpine
+
+# alpine_repo accepts a comma-separated list of repo URLs (see
+# mkinitfs-bootparam(7)). Both main and community are mirrored by
+# 01-fetch-online-artifacts.sh - packages like chromium and sway live in
+# community, so it needs to be listed here too, not just main.
+#
+# repo/current is a symlink to the Alpine version the image was built for
+# (ALPINE_VER in builder/config.env), so this doesn't name a version either.
+# The initramfs also writes these into the kiosk's /etc/apk/repositories.
+set repo-main ${boot-server}/repo/current/main
+set repo-community ${boot-server}/repo/current/community
+set repo ${repo-main},${repo-community}
+
+# --- Optional app overlay ---
+# If app-url is set, it's passed through to the kernel as appurl= and
+# picked up by the "app" OpenRC service (see
+# builder/overlay-src/etc/init.d/app), which downloads a SquashFS image
+# from this URL, mounts it read-only at /opt/app, and runs
+# /opt/app/init.sh (if present) before the kiosk starts.
+#
+# Leave app-url blank to skip all of this - the app service becomes a
+# no-op and boots straight to the kiosk as before.
+#
+# e.g. set app-url ${base-url}/app.squashfs
+set app-url
+
+# Optional sha256 of the app-url SquashFS, checked before it's mounted.
+# Leave blank to skip verification.
+set app-sha256
+
+# --- Optional private CA cert ---
+# If cacert-url is set, it's passed through to the kernel as cacerturl=
+# and picked up by the "cacert" OpenRC service (see
+# builder/overlay-src/etc/init.d/cacert), which downloads the PEM cert,
+# installs it into the system trust store and runs update-ca-certificates
+# before app-backend and the kiosk start.
+#
+# Leave cacert-url blank to skip this - public CAs are trusted either way.
+#
+# e.g. set cacert-url ${base-url}/ca.crt
+set cacert-url
+
+# Optional sha256 of the cacert-url file, checked before it's installed.
+# Leave blank to skip verification.
+set cacert-sha256
+
+# --- Software rendering ---
+# If swrender is set to a non-empty value, Sway and Chromium render on the
+# CPU instead of the GPU (see builder/overlay-src/etc/init.d/kiosk). Needed
+# in VMs such as VMware Workstation, where the virtual GPU fails to
+# initialise and you get a white screen. Slower - leave it blank on real
+# hardware with a working GPU driver.
+set swrender 1
+
+# --- Development mode and root access ---
+# If devmode is set to a non-empty value (production should be unset) then
+# at boot the machine generates fresh SSH host keys, installs your key for root,
+# and starts sshd
+#
+# Leave devmode blank in a production environment
+set devmode
+
+# --- Boot ---
+# Any failure from here on (a dropped packet, nginx restarting, the link
+# still settling) jumps to :retry below rather than ending the script -
+# otherwise the firmware gives up on network boot and falls through to
+# whatever boots next, and the kiosk stays down until someone power-cycles
+# it.
+:boot
+echo Booting...
+
+# Load the kernel and initramfs. The kernel's command line is set further
+# down with imgargs, once we know whether the splash image loaded.
+kernel ${base-url}/vmlinuz-lts || goto retry
+initrd ${base-url}/initramfs-lts || goto retry
+
+# Optional boot splash image (built by builder/scripts/03-splash.sh),
+# unpacked on top of the initramfs. Alpine's initramfs-init shows it from
+# just after the network comes up, so the long package install isn't a
+# black screen; etc/init.d/splashd takes over from it later. If it isn't
+# on the boot server, boot carries on without it - it's cosmetic, so
+# unlike everything else here it's not worth retrying for.
+set splash-initrd
+initrd ${base-url}/splash.cpio.gz || goto nosplash
+set splash-initrd initrd=splash.cpio.gz
+goto splashdone
+:nosplash
+echo No splash image on the boot server - booting without it
+:splashdone
+
+# Kernel command line.
+#
+# initrd= names each initrd loaded above; splash-initrd is empty if the
+# splash image didn't load.
+#
+# vga=791 requests a 1024x768 VESA framebuffer. This isn't optional
+# decoration: fbsplash (the busybox applet etc/init.d/splashd uses to
+# render /etc/splash/splash.ppm - no extra apk package needed) has nothing to draw to on legacy BIOS boots without a framebuffer active.
+# UEFI boots get efifb automatically and ignore this. Drop it if you'd
+# rather keep the plain text console.
+#
+# sysctl.kernel.sysrq=0 disables the magic SysRq key from the moment the
+# kernel starts (etc/sysctl.d/90-kiosk.conf in the image sets it again
+# once the real root is up).
+#
+# vt.global_cursor_default=0 stops the text cursor blinking on top of the
+# splash.
+#
+# fbcon=nodefer: Alpine's kernel otherwise defers putting the framebuffer
+# console on screen until the first text is drawn on the visible terminal,
+# and the splashes keep text off it - so on drivers that keep the
+# framebuffer in a separate buffer (e.g. VMware's) the splash can end up
+# drawn somewhere that's never displayed, or wiped when the takeover
+# finally happens mid-boot. This does the takeover at boot instead.
+imgargs vmlinuz-lts \
+    initrd=initramfs-lts \
+    ${splash-initrd} \
+    apkovl=${base-url}/config.apkovl.tar.gz \
+    modloop=${base-url}/modloop-lts \
+    alpine_repo=${repo} \
+    appurl=${app-url} \
+    appsha256=${app-sha256} \
+    cacerturl=${cacert-url} \
+    cacertsha256=${cacert-sha256} \
+    devmode=${devmode} \
+    swrender=${swrender} \
+    vga=791 \
+    sysctl.kernel.sysrq=0 \
+    vt.global_cursor_default=0 \
+    fbcon=nodefer \
+    splash \
+    quiet || goto retry
+
+# Go!
+boot || goto retry
+
+# Free whatever was half-loaded (so repeated attempts don't pile images
+# up in memory), back off, and try the whole sequence again - forever,
+# since there's nothing better for an unattended kiosk to do.
+:retry
+echo Boot failed, retrying in 10 seconds...
+imgfree
+sleep 10
+goto boot

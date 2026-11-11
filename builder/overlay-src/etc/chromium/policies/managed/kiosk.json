@@ -1,0 +1,39 @@
+{
+  "PrintingEnabled": false,
+  "DefaultPopupsSetting": 2,
+  "DownloadRestrictions": 3,
+
+  "DeveloperToolsAvailability": 2,
+  "IncognitoModeAvailability": 1,
+  "BrowserGuestModeEnabled": false,
+  "BrowserAddProfileEnabled": false,
+  "ExtensionInstallBlocklist": ["*"],
+
+  "URLBlocklist": ["*"],
+  "URLAllowlist": ["http://localhost:3000"],
+
+  "AllowFileSelectionDialogs": false,
+  "TaskManagerEndProcessEnabled": false,
+  "UserFeedbackAllowed": false,
+
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "AudioCaptureAllowed": false,
+  "VideoCaptureAllowed": false,
+  "ScreenCaptureAllowed": false,
+  "BackgroundModeEnabled": false,
+  "ComponentUpdatesEnabled": false,
+
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "TranslateEnabled": false,
+  "BookmarkBarEnabled": false,
+  "EditBookmarksEnabled": false,
+  "ShowHomeButton": false,
+  "DefaultBrowserSettingEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "MetricsReportingEnabled": false
+}

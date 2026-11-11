@@ -1,0 +1,16 @@
+# Installed into /etc/udev/rules.d/ by this app's init.sh at boot.
+#
+# Tags every USB *device* (not each of its interfaces, which udev reports
+# as separate usb_interface events) with "phantom_usb". The backend runs
+# "udevadm monitor --tag-match=phantom_usb", so this rule is the one place
+# that decides which devices show up in the kiosk.
+#
+# Numbered 90 so it runs after the stock 50-udev-default.rules, which has
+# already imported usb_id and hwdb (ID_VENDOR, ID_MODEL, ID_SERIAL, ...)
+# by the time this matches.
+#
+# To narrow it down, add matches - e.g. skip hubs (class 09):
+#   ..., ATTR{bDeviceClass}!="09", TAG+="phantom_usb"
+# or only report one vendor:
+#   ..., ENV{ID_VENDOR_ID}=="0781", TAG+="phantom_usb"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", TAG+="phantom_usb"

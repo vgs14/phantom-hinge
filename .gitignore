@@ -1,0 +1,9 @@
+builder/http/
+srv/nginx/wwwroot/alpine/
+srv/nginx/wwwroot/repo/
+srv/dnsmasq/tftp/boot/
+builder/apkindex_cache/
+builder/tftp/
+builder/build/
+builder/ssh-dev/authorized_keys
+builder/netboot_cache/

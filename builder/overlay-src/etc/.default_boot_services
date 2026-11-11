@@ -1,0 +1,6 @@
+
+# This file needs to exist, but the content does not matter.
+# See
+# - https://serverfault.com/questions/1147870/alpine-boot-via-ipxe-and-execute-a-script-cant-stat-filesystem-no-such-fil
+# - https://github.com/alpinelinux/mkinitfs/blob/c523f72d4adb2eef8017388b96af71846b77e257/initramfs-init.in#L675
+

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Creates an unprivileged user for sway/chromium to run as.
+# Runs once per boot via the "local" OpenRC service.
+
+adduser -D kiosk
+addgroup kiosk kiosk
+addgroup kiosk video
+addgroup kiosk input
+addgroup kiosk seat
+addgroup kiosk render
+
+export XDG_RUNTIME_DIR=/run/user/$(id -u kiosk)
+mkdir -p "$XDG_RUNTIME_DIR"
+chown kiosk:kiosk "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"

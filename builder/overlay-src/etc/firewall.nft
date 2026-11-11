@@ -1,0 +1,45 @@
+#!/usr/sbin/nft -f
+# Kiosk firewall, loaded by etc/init.d/firewall. Nothing on the network
+# gets to start a connection to the kiosk; the kiosk can connect out to
+# anything. "inet" covers IPv4 and IPv6 in one table.
+#
+# Replies to the kiosk's own outbound connections (DNS, HTTP to the boot
+# server, HTTPS to your backend, ...) are let back in by the
+# established/related rule. Ping and every other unsolicited inbound
+# packet are dropped.
+#
+# devmode (etc/init.d/devmode) adds an accept rule for SSH on port 22 at
+# runtime, only on boots where devmode= is set.
+
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
+
+        # The browser talks to the Node backend over loopback.
+        iif lo accept
+
+        ct state established,related accept
+
+        # IPv6 can't resolve neighbours (its equivalent of ARP) without
+        # these, which would break any IPv6 the network does offer.
+        icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } accept
+
+        ct state invalid drop
+
+        # DHCP lease renewals. udhcpc uses a raw socket for the initial
+        # lease, which never touches this table, but renewals are unicast
+        # UDP straight to port 68.
+        udp sport 67 udp dport 68 accept
+    }
+
+    # The kiosk isn't a router.
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+}

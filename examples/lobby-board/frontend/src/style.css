@@ -1,0 +1,69 @@
+/* Global styles. Built for a landscape screen viewed from a few metres away,
+   so sizes are generous. Only the system fonts are used - the kiosk is
+   offline, and the base image ships DejaVu. */
+
+:root {
+  /* --accent is set from VITE_ACCENT_COLOR in main.js. */
+  --accent: #4f8cff;
+  --bg: #0e1116;
+  --panel: #171b22;
+  --panel-2: #1e232c;
+  --line: #2a303b;
+  --text: #eef1f5;
+  --muted: #9aa4b2;
+  --faint: #677080;
+  --free: #3fb47c;
+  --busy: #e5534b;
+  --warn: #e3a935;
+
+  color-scheme: dark;
+  font-family: system-ui, "DejaVu Sans", sans-serif;
+  font-size: clamp(14px, 1.05vw, 22px);
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  /* No text selection or drag ghosts from stray touches. */
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+h1, h2, h3 {
+  margin: 0;
+  line-height: 1.15;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1.4rem 1.6rem;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.15rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

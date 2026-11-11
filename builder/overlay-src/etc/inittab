@@ -1,0 +1,35 @@
+# /etc/inittab
+#
+# Alpine's stock inittab (from alpine-baselayout-data) minus the tty1-6
+# gettys. A kiosk has no business offering a console login: even with root
+# locked (etc/local.d/02-lock-root.start), a login prompt is one more thing
+# to poke at if someone gets out of Sway onto another VT. Debug access is
+# via devmode SSH instead (see etc/init.d/devmode).
+#
+# If you need a local console while debugging, uncomment a tty line below
+# and rebuild.
+
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+
+#tty1::respawn:/sbin/getty 38400 tty1
+
+# Placeholder that stops Alpine's initramfs adding a getty back. On every
+# boot, its setup_inittab_console() looks up the kernel console (tty1,
+# unless a console= kernel argument says otherwise) and appends
+# "<tty>::respawn:/sbin/getty ..." unless a line here already starts with
+# "<tty>:". This one does: it only runs /bin/true at shutdown, so it's
+# harmless, but its presence means no login prompt gets added. If you add
+# a console= to autoexec.ipxe, add a matching line here. If you uncomment
+# the tty1 getty above for debugging, delete the tty1 line here.
+tty1::shutdown:/bin/true
+
+# Put a getty on the serial port
+#ttyS0::respawn:/sbin/getty -L 115200 ttyS0 vt100
+
+# Stuff to do for the 3-finger salute
+::ctrlaltdel:/sbin/reboot
+
+# Stuff to do before rebooting
+::shutdown:/sbin/openrc shutdown

@@ -1,0 +1,6 @@
+# busybox syslogd options. Everything the kiosk logs - Sway, Chromium,
+# the Node backend, OpenRC services - ends up in /var/log/messages, which
+# is in RAM like the rest of the filesystem. -s/-b rotate it at 1MB and
+# keep 2 old copies, so logging tops out at about 3MB however long the
+# kiosk runs. -t strips client timestamps (Alpine's default).
+SYSLOGD_OPTS="-t -s 1024 -b 2"

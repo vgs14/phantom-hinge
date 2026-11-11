@@ -1,0 +1,7 @@
+#!/bin/sh
+# Creates an unprivileged user for the Node.js backend to run as.
+# Runs once per boot via the "local" OpenRC service, same as
+# 00-kiosk-user.start - kept as a separate account (not "kiosk") so the
+# browser and the backend process aren't sharing a uid.
+
+adduser -D appbackend
